@@ -1,0 +1,62 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Repository Scanner",
+    "version": "1.0.0",
+    "description": "API for scanning a Git repository and listing its files."
+  },
+  "paths": {
+    "/scan-repo": {
+      "post": {
+        "operationId": "scanRepo",
+        "summary": "Scans a public Git repository and returns a list of its files and key file contents.",
+        "description": "This tool takes a public GitHub repository URL, clones it, lists all files, and reads the contents of key project files (like requirements.txt, package.json, Dockerfile, etc.). Use this when a user wants you to analyze a GitHub repository.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "repo_url": {
+                    "type": "string",
+                    "description": "The full URL of the public GitHub repository to scan."
+                  }
+                },
+                "required": ["repo_url"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A JSON object containing file paths and key file contents.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "key_file_contents": {
+                      "type": "object",
+                      "description": "Contents of key project files like requirements.txt, package.json, Dockerfile, etc."
+                    },
+                    "error": {
+                      "type": "string",
+                      "description": "Error message if the scan failed."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

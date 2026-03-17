@@ -1,0 +1,29 @@
+# Python virtual environment
+venv/
+.venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Terraform state and provider files
+# These can contain sensitive information and should not be committed!
+.terraform/
+*.tfstate
+*.tfstate.*.backup
+
+# Build artifacts
+# We generate this zip file, so we don't need to store it in git
+dist/
+
+# IDE and OS specific files
+.vscode/
+.idea/
+.DS_Store
+
+# Package installers and archives
+*.pkg
+*.dmg
+*.exe
+*.zip
+*.tar.gz
