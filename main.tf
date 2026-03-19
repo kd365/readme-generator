@@ -306,3 +306,67 @@ resource "aws_s3_bucket_notification" "bucket_notification" {
 
   depends_on = [aws_lambda_permission.allow_s3_to_invoke_orchestrator]
 }
+
+# --- NEW RESOURCES FOR CI/CD PIPELINE ---
+
+resource "random_string" "state_bucket_suffix" {
+  length  = 8
+  special = false
+  upper   = false
+}
+
+resource "aws_s3_bucket" "terraform_state" {
+  bucket = "tf-readme-generator-state-${random_string.state_bucket_suffix.result}"
+}
+
+resource "aws_dynamodb_table" "terraform_locks" {
+  name         = "readme-generator-tf-locks"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "LockID"
+
+  attribute {
+    name = "LockID"
+    type = "S"
+  }
+}
+
+output "terraform_state_bucket_name" {
+  description = "The name of the S3 bucket for the Terraform state."
+  value       = aws_s3_bucket.terraform_state.bucket
+}
+
+# GitHub Actions OIDC role
+resource "aws_iam_role" "github_actions_role" {
+  name = "GitHubActionsRole-ReadmeGenerator"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow"
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Principal = {
+        Federated = "arn:aws:iam::388691194728:oidc-provider/token.actions.githubusercontent.com"
+      }
+      Condition = {
+        StringEquals = {
+          "token.actions.githubusercontent.com:sub" = "repo:kd365/readme-generator:ref:refs/heads/main"
+        }
+      }
+    }]
+  })
+
+  lifecycle {
+    ignore_changes = [assume_role_policy]
+  }
+}
+
+
+resource "aws_iam_role_policy_attachment" "github_actions_permissions" {
+  role       = aws_iam_role.github_actions_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+output "github_actions_role_arn" {
+  description = "The ARN of the IAM role for GitHub Actions."
+  value       = aws_iam_role.github_actions_role.arn
+}
