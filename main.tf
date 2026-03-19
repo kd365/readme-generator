@@ -137,20 +137,32 @@ module "project_summarizer_agent" {
   agent_name              = "Project_Summarizer_Agent"
   agent_resource_role_arn = module.bedrock_agent_role.role_arn
   instruction = <<-EOT
-    You are an expert software developer. Your ONLY task is to analyze the following list of filenames and write a single, concise paragraph summarizing the project's likely purpose.
-    Infer the main programming language and potential frameworks from file extensions and common project file names (e.g., 'pom.xml' implies Java/Maven, 'package.json' implies Node.js).
-    Do not add any preamble or extra text. Only provide the summary paragraph.
+    You are an expert software developer writing a project summary for a README.md.
+    Analyze the provided file list and write a confident, factual summary of the project's purpose and key components.
+    **Do not use uncertain or hedging language** like 'it appears to be,' 'likely,' or 'seems to be.' State your analysis as fact.
+    Your response must be only the summary paragraph.
   EOT
 }
+
 
 module "installation_guide_agent" {
   source                  = "./modules/bedrock_agent"
   agent_name              = "Installation_Guide_Agent"
   agent_resource_role_arn = module.bedrock_agent_role.role_arn
   instruction = <<-EOT
-    You are a technical writer. Your ONLY job is to scan the provided list of filenames.
-    If you see a common dependency file like 'requirements.txt', 'package.json', 'pom.xml', or 'go.mod', write a '## Getting Started' section in Markdown that includes the standard command to install dependencies for that file type.
-    If you do not see any recognizable dependency files, respond with the exact text: 'No dependency management file found.'
+    You are a technical writer creating a README.md. Your ONLY job is to scan the provided list of filenames.
+    If you see a common dependency file, write a '## Installation' section in Markdown.
+    Your response must be concise and contain ONLY the command.
+    For example, if you see 'requirements.txt', your entire response MUST be:
+    ## Installation
+    `
+    `
+    `bash
+    pip install -r requirements.txt
+    `
+    `
+    `
+    If you do not see any recognizable dependency files, respond with an empty string.
   EOT
 }
 
@@ -159,22 +171,34 @@ module "usage_examples_agent" {
   agent_name              = "Usage_Examples_Agent"
   agent_resource_role_arn = module.bedrock_agent_role.role_arn
   instruction = <<-EOT
-    You are a software developer. Your ONLY task is to look at the list of filenames and identify the most likely main script or entry point (e.g., 'main.py', 'index.js', 'app.py').
-    Write a '## Usage' section in Markdown that shows a common command to run the project.
-    For example, if you see 'main.py', suggest 'python main.py'.
+    You are a software developer writing a README.md. Your ONLY task is to identify the most likely entry point from a list of filenames.
+    Write a '## Usage' section in Markdown showing the command to run the project.
+    Your response MUST be concise and wrap the command in a bash code block.
+    For example, if you see 'main.py', your entire response MUST be:
+    ## Usage
+    `
+    `
+    `bash
+    python main.py
+    `
+    `
+    `
   EOT
 }
 
 # --- Lab 4: Final Compiler Agent & Orchestrator ---
+
 
 module "final_compiler_agent" {
   source                  = "./modules/bedrock_agent"
   agent_name              = "Final_Compiler_Agent"
   agent_resource_role_arn = module.bedrock_agent_role.role_arn
   instruction = <<-EOT
-    You are a technical document compiler. Your ONLY task is to take a JSON object containing different sections of a README file (project_summary, installation_guide, and usage_examples) and assemble them into a single, well-formatted Markdown document.
-    Use the repository name for the main H1 header. Use H2 headers for all other sections (e.g., ## Project Summary, ## Installation, ## Usage).
-    Do not add any preamble, apologies, explanations of your process, or any conversational text. Only return the pure, complete Markdown document.
+    You are a technical document compiler. Your task is to take a JSON object containing different sections of a README file and assemble them into a single Markdown document.
+    Use the repository name for the main H1 header (e.g., # repository_name).
+    Combine the other sections provided.
+    Your output MUST be only the pure, complete Markdown document.
+    Do NOT include any preamble, apologies, explanations of your process, or any conversational text.
   EOT
 }
 
@@ -192,6 +216,10 @@ module "orchestrator_execution_role" {
 resource "aws_iam_policy" "orchestrator_permissions" {
   name        = "ReadmeGeneratorOrchestratorPolicy"
   description = "Allows Lambda to invoke Bedrock Agents and use the S3 bucket."
+
+  lifecycle {
+    ignore_changes = [policy]
+  }
 
   policy = jsonencode({
     Version   = "2012-10-17",
