@@ -12,7 +12,13 @@ terraform {
 }
 
 provider "aws" {
-  region = "us-east-1" # You can change this to your preferred region
+  region = "us-east-1"
+}
+
+variable "name_suffix" {
+  description = "Suffix to append to resource names to avoid collisions in shared accounts."
+  type        = string
+  default     = "KH"
 }
 
 resource "random_string" "suffix" {
@@ -30,7 +36,7 @@ module "s3_bucket" {
 # Role specifically for the Lambda function to run
 module "lambda_execution_role" {
   source             = "./modules/iam"
-  role_name          = "ReadmeGeneratorLambdaExecutionRole"
+  role_name          = "ReadmeGeneratorLambdaExecutionRole-${var.name_suffix}"
   service_principals = ["lambda.amazonaws.com"]
   policy_arns = [
     "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
@@ -38,7 +44,7 @@ module "lambda_execution_role" {
 }
 
 resource "aws_iam_policy" "repo_scanner_s3_write" {
-  name = "RepoScannerS3WritePolicy"
+  name = "RepoScannerS3WritePolicy-${var.name_suffix}"
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
@@ -59,7 +65,7 @@ resource "aws_iam_role_policy_attachment" "repo_scanner_s3_write_attach" {
 # Role specifically for the Bedrock Agent to use
 module "bedrock_agent_role" {
   source             = "./modules/iam"
-  role_name          = "ReadmeGeneratorBedrockAgentRole"
+  role_name          = "ReadmeGeneratorBedrockAgentRole-${var.name_suffix}"
   service_principals = ["bedrock.amazonaws.com"]
   policy_arns = [
     "arn:aws:iam::aws:policy/AmazonBedrockFullAccess"
@@ -78,7 +84,7 @@ data "archive_file" "repo_scanner_zip" {
 }
 
 resource "aws_lambda_function" "repo_scanner_lambda" {
-  function_name    = "RepoScannerTool"
+  function_name    = "RepoScannerTool-${var.name_suffix}"
   role             = module.lambda_execution_role.role_arn # Uses the dedicated Lambda role
   filename         = data.archive_file.repo_scanner_zip.output_path
   handler          = "lambda_function.handler"
@@ -101,7 +107,7 @@ resource "aws_lambda_function" "repo_scanner_lambda" {
 
 module "repo_scanner_agent" {
   source                  = "./modules/bedrock_agent"
-  agent_name              = "Repo_Scanner_Agent-KH"
+  agent_name              = "Repo_Scanner_Agent-${var.name_suffix}"
   agent_resource_role_arn = module.bedrock_agent_role.role_arn
   instruction             = "You are the Repo Scanner Agent. When given a GitHub URL, immediately use the scan_repo tool to clone it and return the complete file listing along with key file contents. Do not attempt to answer questions about the repository without first scanning it. Always return the full results from the tool."
 }
@@ -134,7 +140,7 @@ resource "aws_lambda_permission" "allow_bedrock_to_invoke_lambda" {
 
 module "project_summarizer_agent" {
   source                  = "./modules/bedrock_agent"
-  agent_name              = "Project_Summarizer_Agent"
+  agent_name              = "Project_Summarizer_Agent-${var.name_suffix}"
   agent_resource_role_arn = module.bedrock_agent_role.role_arn
   instruction = <<-EOT
     You are an expert software developer writing a project summary for a README.md.
@@ -147,7 +153,7 @@ module "project_summarizer_agent" {
 
 module "installation_guide_agent" {
   source                  = "./modules/bedrock_agent"
-  agent_name              = "Installation_Guide_Agent"
+  agent_name              = "Installation_Guide_Agent-${var.name_suffix}"
   agent_resource_role_arn = module.bedrock_agent_role.role_arn
   instruction = <<-EOT
     You are a technical writer creating a README.md. Your ONLY job is to scan the provided list of filenames.
@@ -168,7 +174,7 @@ module "installation_guide_agent" {
 
 module "usage_examples_agent" {
   source                  = "./modules/bedrock_agent"
-  agent_name              = "Usage_Examples_Agent"
+  agent_name              = "Usage_Examples_Agent-${var.name_suffix}"
   agent_resource_role_arn = module.bedrock_agent_role.role_arn
   instruction = <<-EOT
     You are a software developer writing a README.md. Your ONLY task is to identify the most likely entry point from a list of filenames.
@@ -191,7 +197,7 @@ module "usage_examples_agent" {
 
 module "final_compiler_agent" {
   source                  = "./modules/bedrock_agent"
-  agent_name              = "Final_Compiler_Agent"
+  agent_name              = "Final_Compiler_Agent-${var.name_suffix}"
   agent_resource_role_arn = module.bedrock_agent_role.role_arn
   instruction = <<-EOT
     You are a technical document compiler. Your task is to take a JSON object containing different sections of a README file and assemble them into a single Markdown document.
@@ -205,7 +211,7 @@ module "final_compiler_agent" {
 # DEDICATED role for the Orchestrator Lambda
 module "orchestrator_execution_role" {
   source             = "./modules/iam"
-  role_name          = "ReadmeGeneratorOrchestratorExecutionRole"
+  role_name          = "ReadmeGeneratorOrchestratorExecutionRole-${var.name_suffix}"
   service_principals = ["lambda.amazonaws.com"]
   policy_arns = [
     "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
@@ -214,7 +220,7 @@ module "orchestrator_execution_role" {
 
 # Orchestrator-specific permissions policy
 resource "aws_iam_policy" "orchestrator_permissions" {
-  name        = "ReadmeGeneratorOrchestratorPolicy"
+  name        = "ReadmeGeneratorOrchestratorPolicy-${var.name_suffix}"
   description = "Allows Lambda to invoke Bedrock Agents and use the S3 bucket."
 
   lifecycle {
@@ -261,7 +267,7 @@ data "archive_file" "orchestrator_zip" {
 }
 
 resource "aws_lambda_function" "orchestrator_lambda" {
-  function_name    = "ReadmeGeneratorOrchestrator"
+  function_name    = "ReadmeGeneratorOrchestrator-${var.name_suffix}"
   role             = module.orchestrator_execution_role.role_arn
   filename         = data.archive_file.orchestrator_zip.output_path
   handler          = "lambda_function.handler"
@@ -320,7 +326,7 @@ resource "aws_s3_bucket" "terraform_state" {
 }
 
 resource "aws_dynamodb_table" "terraform_locks" {
-  name         = "readme-generator-tf-locks"
+  name         = "readme-generator-tf-locks-${var.name_suffix}"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "LockID"
 
@@ -337,7 +343,7 @@ output "terraform_state_bucket_name" {
 
 # GitHub Actions OIDC role
 resource "aws_iam_role" "github_actions_role" {
-  name = "GitHubActionsRole-ReadmeGenerator"
+  name = "GitHubActionsRole-ReadmeGenerator-${var.name_suffix}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",

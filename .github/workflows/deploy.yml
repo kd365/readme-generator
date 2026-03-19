@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - lab-follow-along
 
 permissions:
   id-token: write
