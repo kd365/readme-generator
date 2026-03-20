@@ -1,3 +1,4 @@
+// terraform configuration for the README Generator project, including all resources for Labs 1-4 and the CI/CD pipeline setup.
 terraform {
   required_providers {
     aws = {
@@ -361,9 +362,7 @@ resource "aws_iam_role" "github_actions_role" {
     }]
   })
 
-  lifecycle {
-    ignore_changes = [assume_role_policy]
-  }
+
 }
 
 
