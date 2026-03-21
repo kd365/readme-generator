@@ -174,10 +174,11 @@ module "installation_guide_agent" {
     Write a '## Getting Started' section with accurate installation instructions.
 
     CONSTRAINTS:
-    - ONLY write installation instructions for the project's PRIMARY language/runtime — the one users need to run the project.
+    - ONLY write installation instructions for ecosystems confirmed by dependency files in the file list.
     - Determine the primary language from the main dependency file (package.json for Node.js, requirements.txt for Python, Cargo.toml for Rust, etc.).
-    - A pyproject.toml that ONLY contains [tool.ruff], [tool.pytest], or other dev tool configs does NOT make this a Python project. Only include Python instructions if pyproject.toml has [project] with dependencies, or if requirements.txt/Pipfile exists.
-    - If the primary project is Node.js (package.json exists), do NOT add Python as a prerequisite just because dev tooling configs exist.
+    - Separate REQUIRED prerequisites (needed to run the project) from OPTIONAL/DEV prerequisites (needed only for development, testing, or linting).
+    - A pyproject.toml that ONLY contains [tool.ruff], [tool.pytest], or other dev tool configs is a dev dependency, NOT a runtime requirement. List it under an optional "### For Development" subsection, not alongside the main prerequisites.
+    - Example structure: list runtime prerequisites under "### Prerequisites", then add "### For Development (optional)" for dev-only tools like linters, test frameworks, or CI tooling.
     - Read the CONTENTS of dependency files from "key_file_contents" to determine exact versions, prerequisites, and the correct package manager/build tool.
     - For ANY language: check dependency files for package manager indicators. Examples: Node.js package.json may specify "packageManager" field (pnpm, yarn) or look for lock files (pnpm-lock.yaml, yarn.lock, package-lock.json). Python may use pip, poetry, pipenv, or conda. Rust uses cargo, Go uses go mod. Always use the ACTUAL package manager, never default to the most common one.
     - Do NOT fabricate or guess about tools/ecosystems not evidenced in the file list.
