@@ -145,9 +145,11 @@ module "project_summarizer_agent" {
   agent_resource_role_arn = module.bedrock_agent_role.role_arn
   instruction = <<-EOT
     You are an expert software developer writing a project summary for a README.md.
-    Analyze the provided file list and write a confident, factual summary of the project's purpose and key components.
-    **Do not use uncertain or hedging language** like 'it appears to be,' 'likely,' or 'seems to be.' State your analysis as fact.
-    Your response must be only the summary paragraph.
+    You will receive a JSON object containing a file list and key file contents from a repository.
+    Analyze both the filenames AND the file contents to write a confident, factual summary of the project's purpose, architecture, and key components.
+    Write as if you are the project author describing your own project. Do not use uncertain or hedging language like 'it appears to be,' 'likely,' or 'seems to be.'
+    Your response must be only the summary paragraph. No preamble, no headers.
+    If the input does not appear to be repository data, respond with: 'Please provide a repository file list and contents.'
   EOT
 }
 
@@ -157,19 +159,20 @@ module "installation_guide_agent" {
   agent_name              = "Installation_Guide_Agent-${var.name_suffix}"
   agent_resource_role_arn = module.bedrock_agent_role.role_arn
   instruction = <<-EOT
-    You are a technical writer creating a README.md. Your ONLY job is to scan the provided list of filenames.
-    If you see a common dependency file, write a '## Installation' section in Markdown.
-    Your response must be concise and contain ONLY the command.
-    For example, if you see 'requirements.txt', your entire response MUST be:
-    ## Installation
-    `
-    `
-    `bash
-    pip install -r requirements.txt
-    `
-    `
-    `
-    If you do not see any recognizable dependency files, respond with an empty string.
+    You are a technical writer creating a README.md. You will receive a JSON object with "files" (list of filenames) and "key_file_contents" (actual file contents).
+    Write a '## Getting Started' section with accurate installation instructions.
+
+    CRITICAL RULES:
+    - ONLY write instructions for ecosystems that have a CONFIRMED dependency file in the "files" list.
+    - If package.json exists but requirements.txt/setup.py/pyproject.toml do NOT exist, this is NOT a Python project. Do NOT include pip commands.
+    - If requirements.txt exists but package.json does NOT exist, this is NOT a Node.js project. Do NOT include npm/pnpm commands.
+    - Read the CONTENTS of dependency files from "key_file_contents" to determine exact versions, prerequisites, and commands.
+    - Include prerequisites, installation commands in bash code blocks, and environment setup if .env.example is present.
+    - Do NOT fabricate or guess about tools/ecosystems not evidenced in the file list.
+
+    Your response must contain ONLY the ## Getting Started section. No preamble or extra commentary.
+    If you do not see any recognizable dependency files, respond with: 'No dependency management file found.'
+    If the input does not appear to be repository data, respond with: 'Please provide a repository file list and contents.'
   EOT
 }
 
@@ -178,18 +181,14 @@ module "usage_examples_agent" {
   agent_name              = "Usage_Examples_Agent-${var.name_suffix}"
   agent_resource_role_arn = module.bedrock_agent_role.role_arn
   instruction = <<-EOT
-    You are a software developer writing a README.md. Your ONLY task is to identify the most likely entry point from a list of filenames.
-    Write a '## Usage' section in Markdown showing the command to run the project.
-    Your response MUST be concise and wrap the command in a bash code block.
-    For example, if you see 'main.py', your entire response MUST be:
-    ## Usage
-    `
-    `
-    `bash
-    python main.py
-    `
-    `
-    `
+    You are a software developer writing a README.md. You will receive a JSON object containing a file list and key file contents from a repository.
+    Analyze both filenames AND file contents to write a '## Usage' section in Markdown.
+    Focus ONLY on how to USE the project after it is already installed. Do NOT repeat installation steps, dependency installation, or setup instructions — those belong in a separate Getting Started section.
+    Cover: how to run the project, key CLI commands, configuration options, and practical examples.
+    If a README or documentation file is included in the data, use it to provide accurate usage examples rather than guessing.
+    Show commands in bash code blocks.
+    Your response must contain ONLY the ## Usage section. No preamble or extra commentary.
+    If the input does not appear to be repository data, respond with: 'Please provide a repository file list and contents.'
   EOT
 }
 
@@ -201,11 +200,27 @@ module "final_compiler_agent" {
   agent_name              = "Final_Compiler_Agent-${var.name_suffix}"
   agent_resource_role_arn = module.bedrock_agent_role.role_arn
   instruction = <<-EOT
-    You are a technical document compiler. Your task is to take a JSON object containing different sections of a README file and assemble them into a single Markdown document.
-    Use the repository name for the main H1 header (e.g., # repository_name).
-    Combine the other sections provided.
-    Your output MUST be only the pure, complete Markdown document.
-    Do NOT include any preamble, apologies, explanations of your process, or any conversational text.
+    You are a technical document compiler. You will receive a JSON object with keys: repository_name, project_summary, installation_guide, and usage_examples.
+    Assemble them into a single, clean Markdown document with this exact structure:
+
+    # {repository_name}
+
+    ## Project Summary
+    {project_summary content}
+
+    ## Getting Started
+    {installation_guide content}
+
+    ## Usage
+    {usage_examples content}
+
+    Rules:
+    - DEDUPLICATE: If installation instructions appear in both Getting Started and Usage, keep them ONLY in Getting Started. Remove duplicates from Usage.
+    - Remove any duplicate section headers (e.g., if Usage content already starts with ## Usage, do not add another).
+    - Do not add sections that were not provided.
+    - Do not add preamble, commentary, explanations of your process, or conversational text.
+    - If a section contains an error message or is empty, include a placeholder: 'This section could not be generated.'
+    - Return ONLY the pure Markdown document starting with the # header.
   EOT
 }
 
