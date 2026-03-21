@@ -1,6 +1,7 @@
 # src/agent_invoker/lambda_function.py
 """Generic Lambda that invokes a Bedrock agent. Used by Step Functions.
-The agent ID and alias are passed in the event payload."""
+The agent ID and alias are passed in the event payload.
+Includes intelligent truncation for large inputs."""
 
 import json
 import boto3
@@ -8,11 +9,64 @@ import os
 import uuid
 
 bedrock_agent_runtime = boto3.client('bedrock-agent-runtime')
-s3_client = boto3.client('s3')
+
+MAX_INPUT_SIZE = 25000
+
+# Dependency files get priority when truncating — these tell agents
+# what language, package manager, and setup the project uses
+PRIORITY_FILES = [
+    "package.json", "requirements.txt", "setup.py", "pyproject.toml",
+    "Cargo.toml", "go.mod", "Gemfile", "pom.xml", "build.gradle",
+    "Dockerfile", "docker-compose.yml", ".env.example", "Makefile",
+]
+
+
+def truncate_input(input_text):
+    """Intelligently truncate large inputs, preserving priority file contents."""
+    if len(input_text) <= MAX_INPUT_SIZE:
+        return input_text
+
+    # Try to parse as JSON (scan data from the scanner agent)
+    try:
+        data = json.loads(input_text)
+    except (json.JSONDecodeError, TypeError):
+        # Not JSON — just truncate raw text
+        print(f"Truncating raw text from {len(input_text)} to {MAX_INPUT_SIZE}")
+        return input_text[:MAX_INPUT_SIZE]
+
+    # If it has files + key_file_contents structure, truncate intelligently
+    if "files" in data and "key_file_contents" in data:
+        trimmed = {"files": data["files"], "key_file_contents": {}}
+
+        # Add priority files first
+        for k, v in data["key_file_contents"].items():
+            basename = os.path.basename(k)
+            if basename in PRIORITY_FILES:
+                trimmed["key_file_contents"][k] = v[:3000] if len(v) > 3000 else v
+
+        # Then add remaining files if space allows
+        for k, v in data["key_file_contents"].items():
+            if os.path.basename(k) not in PRIORITY_FILES:
+                trimmed["key_file_contents"][k] = v[:2000] if len(v) > 2000 else v
+                if len(json.dumps(trimmed)) > MAX_INPUT_SIZE:
+                    break
+
+        result = json.dumps(trimmed)
+        print(f"Truncated scan data: {len(input_text)} -> {len(result)} chars, "
+              f"kept {len(trimmed['key_file_contents'])} key files")
+        return result
+
+    # Generic JSON — just stringify and truncate
+    result = json.dumps(data)
+    if len(result) > MAX_INPUT_SIZE:
+        print(f"Truncating JSON from {len(result)} to {MAX_INPUT_SIZE}")
+        return result[:MAX_INPUT_SIZE]
+    return result
 
 
 def invoke_agent(agent_id, alias_id, input_text):
     """Invoke a Bedrock agent and return the text response."""
+    input_text = truncate_input(input_text)
     print(f"Invoking agent {agent_id} with input length: {len(input_text)}")
     response = bedrock_agent_runtime.invoke_agent(
         agentId=agent_id,
