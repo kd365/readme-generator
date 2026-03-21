@@ -594,22 +594,15 @@ def generate_readme():
         scan_json = json.dumps(trimmed)
         console.print(f"  [dim]Kept {len(trimmed['key_file_contents'])} key files in agent input[/dim]")
 
-    # Run 3 analytical agents with staggered parallel starts
-    console.print("\n  [bold cyan]Running analytical agents (staggered parallel)...[/bold cyan]\n")
+    # Run 3 analytical agents sequentially with delays
+    console.print("\n  [bold cyan]Running analytical agents...[/bold cyan]\n")
     results = {}
     agent_keys = ["summarizer", "install", "usage"]
 
-    with Live(Spinner("dots", text="  Waiting on all agents..."), console=console, refresh_per_second=10):
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {}
-            for i, key in enumerate(agent_keys):
-                if i > 0:
-                    time.sleep(2)  # Stagger starts to avoid throttling
-                futures[executor.submit(invoke_agent, key, scan_json, False)] = key
-
-            for future in as_completed(futures):
-                key = futures[future]
-                results[key] = future.result()
+    for i, agent_key in enumerate(agent_keys):
+        results[agent_key] = invoke_agent(agent_key, scan_json, show_spinner=True)
+        if i < len(agent_keys) - 1:
+            time.sleep(10)  # Wait between calls to avoid throttling
 
     # Display results and strip duplicate headers
     labels = {"summarizer": "Project Summary", "install": "Getting Started", "usage": "Usage"}
@@ -646,7 +639,7 @@ def generate_readme():
     })
 
     console.print("\n  [bold cyan]Compiling README...[/bold cyan]")
-    time.sleep(8)  # Avoid Bedrock throttling before compiler call
+    time.sleep(10)  # Avoid Bedrock throttling before compiler call
     readme_content = invoke_agent("compiler", compiler_input)
 
     # Post-processing: strip preamble before first # header
@@ -816,7 +809,7 @@ def generate_readme_serverless():
 
             # Auto-save to local projects folder
             os.makedirs(f"./projects/{repo_name}", exist_ok=True)
-            local_path = f"./projects/{repo_name}/GENERATED-README.md"
+            local_path = f"./projects/{repo_name}/GENERATED-README-serverless.md"
             with open(local_path, "w") as f:
                 f.write(readme_content)
 

@@ -174,11 +174,12 @@ module "installation_guide_agent" {
     Write a '## Getting Started' section with accurate installation instructions.
 
     CONSTRAINTS:
-    - ONLY write instructions for ecosystems that have a CONFIRMED dependency file in the "files" list.
-    - If package.json exists but requirements.txt/setup.py/pyproject.toml do NOT exist, this is NOT a Python project. Do NOT include pip commands.
-    - If requirements.txt exists but package.json does NOT exist, this is NOT a Node.js project. Do NOT include npm/pnpm commands.
+    - ONLY write installation instructions for the project's PRIMARY language/runtime — the one users need to run the project.
+    - Determine the primary language from the main dependency file (package.json for Node.js, requirements.txt for Python, Cargo.toml for Rust, etc.).
+    - A pyproject.toml that ONLY contains [tool.ruff], [tool.pytest], or other dev tool configs does NOT make this a Python project. Only include Python instructions if pyproject.toml has [project] with dependencies, or if requirements.txt/Pipfile exists.
+    - If the primary project is Node.js (package.json exists), do NOT add Python as a prerequisite just because dev tooling configs exist.
     - Read the CONTENTS of dependency files from "key_file_contents" to determine exact versions, prerequisites, and the correct package manager/build tool.
-    - For ANY language: check dependency files for package manager indicators. Examples: Node.js package.json may specify "packageManager" field (pnpm, yarn) or look for lock files (pnpm-lock.yaml, yarn.lock, package-lock.json). Python may use pip, poetry, pipenv, or conda — check for Pipfile, pyproject.toml with [tool.poetry], or environment.yml. Rust uses cargo, Go uses go mod, Java may use maven (pom.xml) or gradle (build.gradle). Always use the ACTUAL package manager, never default to the most common one.
+    - For ANY language: check dependency files for package manager indicators. Examples: Node.js package.json may specify "packageManager" field (pnpm, yarn) or look for lock files (pnpm-lock.yaml, yarn.lock, package-lock.json). Python may use pip, poetry, pipenv, or conda. Rust uses cargo, Go uses go mod. Always use the ACTUAL package manager, never default to the most common one.
     - Do NOT fabricate or guess about tools/ecosystems not evidenced in the file list.
 
     OUTPUT FORMAT:
