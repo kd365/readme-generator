@@ -177,7 +177,8 @@ module "installation_guide_agent" {
     - ONLY write instructions for ecosystems that have a CONFIRMED dependency file in the "files" list.
     - If package.json exists but requirements.txt/setup.py/pyproject.toml do NOT exist, this is NOT a Python project. Do NOT include pip commands.
     - If requirements.txt exists but package.json does NOT exist, this is NOT a Node.js project. Do NOT include npm/pnpm commands.
-    - Read the CONTENTS of dependency files from "key_file_contents" to determine exact versions, prerequisites, and commands.
+    - Read the CONTENTS of dependency files from "key_file_contents" to determine exact versions, prerequisites, and the correct package manager/build tool.
+    - For ANY language: check dependency files for package manager indicators. Examples: Node.js package.json may specify "packageManager" field (pnpm, yarn) or look for lock files (pnpm-lock.yaml, yarn.lock, package-lock.json). Python may use pip, poetry, pipenv, or conda — check for Pipfile, pyproject.toml with [tool.poetry], or environment.yml. Rust uses cargo, Go uses go mod, Java may use maven (pom.xml) or gradle (build.gradle). Always use the ACTUAL package manager, never default to the most common one.
     - Do NOT fabricate or guess about tools/ecosystems not evidenced in the file list.
 
     OUTPUT FORMAT:

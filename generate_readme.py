@@ -39,7 +39,8 @@ ALIAS_ID = "TSTALIASID"
 KEY_FILES = [
     "README.md", "readme.md", "README.rst",
     "requirements.txt", "setup.py", "setup.cfg", "pyproject.toml",
-    "package.json", "Cargo.toml", "go.mod", "Gemfile", "pom.xml", "build.gradle",
+    "package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json", "Pipfile",
+    "Cargo.toml", "go.mod", "Gemfile", "pom.xml", "build.gradle", "environment.yml",
     "Makefile", "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
     ".env.example", "LICENSE", "CONTRIBUTING.md",
 ]
@@ -348,7 +349,7 @@ def invoke_agent(agent_key, input_text, show_spinner=True):
                 return  # Success
             except Exception as e:
                 if "throttling" in str(e).lower() and attempt < max_retries - 1:
-                    wait = (attempt + 1) * 5  # 5s, 10s backoff
+                    wait = (attempt + 1) * 10  # 10s, 20s backoff
                     time.sleep(wait)
                 else:
                     raise
@@ -595,7 +596,7 @@ def generate_readme():
     for i, agent_key in enumerate(agent_keys):
         results[agent_key] = invoke_agent(agent_key, scan_json, show_spinner=True)
         if i < len(agent_keys) - 1:
-            time.sleep(3)  # Avoid Bedrock throttling between calls
+            time.sleep(8)  # Avoid Bedrock throttling between calls
 
     # Display results and strip duplicate headers
     labels = {"summarizer": "Project Summary", "install": "Getting Started", "usage": "Usage"}
@@ -632,7 +633,7 @@ def generate_readme():
     })
 
     console.print("\n  [bold cyan]Compiling README...[/bold cyan]")
-    time.sleep(3)  # Avoid Bedrock throttling before compiler call
+    time.sleep(8)  # Avoid Bedrock throttling before compiler call
     readme_content = invoke_agent("compiler", compiler_input)
 
     # Post-processing: strip preamble before first # header
