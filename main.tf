@@ -470,6 +470,24 @@ resource "aws_lambda_function" "save_to_s3" {
   }
 }
 
+# Direct scanner Lambda (bypasses Bedrock Agent, returns structured JSON)
+data "archive_file" "scanner_direct_zip" {
+  type        = "zip"
+  source_dir  = "${path.root}/src/scanner_direct"
+  output_path = "${path.root}/dist/scanner_direct.zip"
+}
+
+resource "aws_lambda_function" "scanner_direct" {
+  function_name    = "ScannerDirect-${var.name_suffix}"
+  role             = module.lambda_execution_role.role_arn
+  filename         = data.archive_file.scanner_direct_zip.output_path
+  handler          = "lambda_function.handler"
+  runtime          = "python3.11"
+  timeout          = 90
+  source_code_hash = data.archive_file.scanner_direct_zip.output_base64sha256
+  layers           = ["arn:aws:lambda:us-east-1:553035198032:layer:git-lambda2:8"]
+}
+
 # IAM role for Step Functions
 module "step_functions_role" {
   source             = "./modules/iam"
@@ -490,6 +508,7 @@ resource "aws_iam_role_policy" "step_functions_invoke_lambda" {
         Action = "lambda:InvokeFunction"
         Resource = [
           aws_lambda_function.repo_scanner_lambda.arn,
+          aws_lambda_function.scanner_direct.arn,
           aws_lambda_function.agent_invoker.arn,
           aws_lambda_function.save_to_s3.arn,
         ]
@@ -508,17 +527,14 @@ resource "aws_sfn_state_machine" "readme_generator" {
     StartAt  = "ScanRepository"
     States = {
 
-      # Step 1: Invoke the Repo Scanner agent
+      # Step 1: Clone repo and get structured JSON (bypasses Bedrock Agent)
       ScanRepository = {
         Type     = "Task"
         Resource = "arn:aws:states:::lambda:invoke"
         Parameters = {
-          FunctionName = aws_lambda_function.agent_invoker.arn
+          FunctionName = aws_lambda_function.scanner_direct.arn
           Payload = {
-            "agent_id"   = module.repo_scanner_agent.agent_id
-            "alias_id"   = "TSTALIASID"
-            "input_text.$" = "$.repo_url"
-            "step_name"  = "scanner"
+            "repo_url.$" = "$.repo_url"
           }
         }
         ResultPath = "$.scanner_output"
@@ -562,7 +578,7 @@ resource "aws_sfn_state_machine" "readme_generator" {
                   Payload = {
                     "agent_id"   = module.project_summarizer_agent.agent_id
                     "alias_id"   = "TSTALIASID"
-                    "input_text.$" = "$.scanner_output.Payload.result"
+                    "input_text.$" = "States.JsonToString($.scanner_output.Payload)"
                     "step_name"  = "summarizer"
                   }
                 }
@@ -589,7 +605,7 @@ resource "aws_sfn_state_machine" "readme_generator" {
                   Payload = {
                     "agent_id"   = module.installation_guide_agent.agent_id
                     "alias_id"   = "TSTALIASID"
-                    "input_text.$" = "$.scanner_output.Payload.result"
+                    "input_text.$" = "States.JsonToString($.scanner_output.Payload)"
                     "step_name"  = "installation"
                   }
                 }
@@ -616,7 +632,7 @@ resource "aws_sfn_state_machine" "readme_generator" {
                   Payload = {
                     "agent_id"   = module.usage_examples_agent.agent_id
                     "alias_id"   = "TSTALIASID"
-                    "input_text.$" = "$.scanner_output.Payload.result"
+                    "input_text.$" = "States.JsonToString($.scanner_output.Payload)"
                     "step_name"  = "usage"
                   }
                 }
