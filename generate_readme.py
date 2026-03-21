@@ -808,22 +808,22 @@ def generate_readme_serverless():
     if status == "SUCCEEDED":
         console.print(f"  [bold green]Execution succeeded![/bold green]")
 
-        # Download result from S3
+        # Download result from S3 and auto-save locally
         output_key = f"outputs/{repo_name}/README.md"
         try:
             obj = s3_client.get_object(Bucket=OUTPUT_BUCKET, Key=output_key)
             readme_content = obj["Body"].read().decode("utf-8")
-            console.print(Panel(readme_content[:800] + ("..." if len(readme_content) > 800 else ""), title="Preview", border_style="green"))
-            console.print(f"\n  [dim]Full output: s3://{OUTPUT_BUCKET}/{output_key}[/dim]")
 
-            # Optionally save locally
-            save = console.input("\n  Save locally? (y/n)> ").strip().lower()
-            if save == "y":
-                os.makedirs(f"./projects/{repo_name}", exist_ok=True)
-                local_path = f"./projects/{repo_name}/GENERATED-README.md"
-                with open(local_path, "w") as f:
-                    f.write(readme_content)
-                console.print(f"  [green]Saved to {local_path}[/green]")
+            # Auto-save to local projects folder
+            os.makedirs(f"./projects/{repo_name}", exist_ok=True)
+            local_path = f"./projects/{repo_name}/GENERATED-README.md"
+            with open(local_path, "w") as f:
+                f.write(readme_content)
+
+            console.print(f"  [green]Saved to {local_path}[/green]")
+            console.print(f"  [dim]Also available at s3://{OUTPUT_BUCKET}/{output_key}[/dim]")
+            console.print()
+            console.print(Panel(readme_content[:1200] + ("..." if len(readme_content) > 1200 else ""), title="Preview", border_style="green"))
         except Exception as e:
             console.print(f"  [red]Could not download result: {e}[/red]")
     else:
