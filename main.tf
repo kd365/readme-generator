@@ -427,3 +427,283 @@ output "github_actions_role_arn" {
   description = "The ARN of the IAM role for GitHub Actions."
   value       = aws_iam_role.github_actions_role.arn
 }
+
+# --- Step Functions: Agent Orchestration ---
+
+# Generic agent invoker Lambda (one function, reused by Step Functions with different inputs)
+data "archive_file" "agent_invoker_zip" {
+  type        = "zip"
+  source_dir  = "${path.root}/src/agent_invoker"
+  output_path = "${path.root}/dist/agent_invoker.zip"
+}
+
+resource "aws_lambda_function" "agent_invoker" {
+  function_name    = "AgentInvoker-${var.name_suffix}"
+  role             = module.orchestrator_execution_role.role_arn
+  filename         = data.archive_file.agent_invoker_zip.output_path
+  handler          = "lambda_function.handler"
+  runtime          = "python3.11"
+  timeout          = 90
+  source_code_hash = data.archive_file.agent_invoker_zip.output_base64sha256
+}
+
+# Save-to-S3 Lambda
+data "archive_file" "save_to_s3_zip" {
+  type        = "zip"
+  source_dir  = "${path.root}/src/save_to_s3"
+  output_path = "${path.root}/dist/save_to_s3.zip"
+}
+
+resource "aws_lambda_function" "save_to_s3" {
+  function_name    = "SaveToS3-${var.name_suffix}"
+  role             = module.orchestrator_execution_role.role_arn
+  filename         = data.archive_file.save_to_s3_zip.output_path
+  handler          = "lambda_function.handler"
+  runtime          = "python3.11"
+  timeout          = 30
+  source_code_hash = data.archive_file.save_to_s3_zip.output_base64sha256
+
+  environment {
+    variables = {
+      OUTPUT_BUCKET = module.s3_bucket.bucket_id
+    }
+  }
+}
+
+# IAM role for Step Functions
+module "step_functions_role" {
+  source             = "./modules/iam"
+  role_name          = "ReadmeGeneratorStepFunctionsRole-${var.name_suffix}"
+  service_principals = ["states.amazonaws.com"]
+  policy_arns        = []
+}
+
+resource "aws_iam_role_policy" "step_functions_invoke_lambda" {
+  name = "InvokeLambdaPolicy"
+  role = module.step_functions_role.role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = "lambda:InvokeFunction"
+        Resource = [
+          aws_lambda_function.repo_scanner_lambda.arn,
+          aws_lambda_function.agent_invoker.arn,
+          aws_lambda_function.save_to_s3.arn,
+        ]
+      }
+    ]
+  })
+}
+
+# The Step Functions State Machine
+resource "aws_sfn_state_machine" "readme_generator" {
+  name     = "ReadmeGenerator-${var.name_suffix}"
+  role_arn = module.step_functions_role.role_arn
+
+  definition = jsonencode({
+    Comment  = "README Generator: orchestrates 5 Bedrock agents with parallel execution and retry logic"
+    StartAt  = "ScanRepository"
+    States = {
+
+      # Step 1: Invoke the Repo Scanner agent
+      ScanRepository = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = aws_lambda_function.agent_invoker.arn
+          Payload = {
+            "agent_id"   = module.repo_scanner_agent.agent_id
+            "alias_id"   = "TSTALIASID"
+            "input_text.$" = "$.repo_url"
+            "step_name"  = "scanner"
+          }
+        }
+        ResultPath = "$.scanner_output"
+        Retry = [
+          {
+            ErrorEquals    = ["Lambda.ServiceException", "Lambda.TooManyRequestsException", "States.TaskFailed"]
+            IntervalSeconds = 10
+            MaxAttempts     = 3
+            BackoffRate     = 2
+          }
+        ]
+        Catch = [
+          {
+            ErrorEquals = ["States.ALL"]
+            ResultPath  = "$.scanner_error"
+            Next        = "ScanFailed"
+          }
+        ]
+        Next = "AnalyzeInParallel"
+      }
+
+      # Error state if scanner fails
+      ScanFailed = {
+        Type  = "Fail"
+        Error = "ScannerFailed"
+        Cause = "The Repo Scanner agent failed after retries."
+      }
+
+      # Step 2: Run 3 analytical agents in parallel
+      AnalyzeInParallel = {
+        Type = "Parallel"
+        Branches = [
+          {
+            StartAt = "InvokeSummarizer"
+            States = {
+              InvokeSummarizer = {
+                Type     = "Task"
+                Resource = "arn:aws:states:::lambda:invoke"
+                Parameters = {
+                  FunctionName = aws_lambda_function.agent_invoker.arn
+                  Payload = {
+                    "agent_id"   = module.project_summarizer_agent.agent_id
+                    "alias_id"   = "TSTALIASID"
+                    "input_text.$" = "$.scanner_output.Payload.result"
+                    "step_name"  = "summarizer"
+                  }
+                }
+                Retry = [
+                  {
+                    ErrorEquals     = ["Lambda.ServiceException", "Lambda.TooManyRequestsException", "States.TaskFailed"]
+                    IntervalSeconds = 10
+                    MaxAttempts     = 3
+                    BackoffRate     = 2
+                  }
+                ]
+                End = true
+              }
+            }
+          },
+          {
+            StartAt = "InvokeInstallation"
+            States = {
+              InvokeInstallation = {
+                Type     = "Task"
+                Resource = "arn:aws:states:::lambda:invoke"
+                Parameters = {
+                  FunctionName = aws_lambda_function.agent_invoker.arn
+                  Payload = {
+                    "agent_id"   = module.installation_guide_agent.agent_id
+                    "alias_id"   = "TSTALIASID"
+                    "input_text.$" = "$.scanner_output.Payload.result"
+                    "step_name"  = "installation"
+                  }
+                }
+                Retry = [
+                  {
+                    ErrorEquals     = ["Lambda.ServiceException", "Lambda.TooManyRequestsException", "States.TaskFailed"]
+                    IntervalSeconds = 10
+                    MaxAttempts     = 3
+                    BackoffRate     = 2
+                  }
+                ]
+                End = true
+              }
+            }
+          },
+          {
+            StartAt = "InvokeUsage"
+            States = {
+              InvokeUsage = {
+                Type     = "Task"
+                Resource = "arn:aws:states:::lambda:invoke"
+                Parameters = {
+                  FunctionName = aws_lambda_function.agent_invoker.arn
+                  Payload = {
+                    "agent_id"   = module.usage_examples_agent.agent_id
+                    "alias_id"   = "TSTALIASID"
+                    "input_text.$" = "$.scanner_output.Payload.result"
+                    "step_name"  = "usage"
+                  }
+                }
+                Retry = [
+                  {
+                    ErrorEquals     = ["Lambda.ServiceException", "Lambda.TooManyRequestsException", "States.TaskFailed"]
+                    IntervalSeconds = 10
+                    MaxAttempts     = 3
+                    BackoffRate     = 2
+                  }
+                ]
+                End = true
+              }
+            }
+          }
+        ]
+        ResultPath = "$.analysis_results"
+        Catch = [
+          {
+            ErrorEquals = ["States.ALL"]
+            ResultPath  = "$.analysis_error"
+            Next        = "CompileWithErrors"
+          }
+        ]
+        Next = "CompileReadme"
+      }
+
+      # Step 3: Compile the README
+      CompileReadme = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = aws_lambda_function.agent_invoker.arn
+          Payload = {
+            "agent_id"   = module.final_compiler_agent.agent_id
+            "alias_id"   = "TSTALIASID"
+            "step_name"  = "compiler"
+            "input_text.$" = "States.Format('{{\"repository_name\":\"{}\",\"project_summary\":\"{}\",\"installation_guide\":\"{}\",\"usage_examples\":\"{}\"}}', $.repo_name, $.analysis_results[0].Payload.result, $.analysis_results[1].Payload.result, $.analysis_results[2].Payload.result)"
+          }
+        }
+        ResultPath = "$.compiler_output"
+        Retry = [
+          {
+            ErrorEquals     = ["Lambda.ServiceException", "Lambda.TooManyRequestsException", "States.TaskFailed"]
+            IntervalSeconds = 10
+            MaxAttempts     = 3
+            BackoffRate     = 2
+          }
+        ]
+        Next = "SaveToS3"
+      }
+
+      # Fallback: compile with error placeholders
+      CompileWithErrors = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = aws_lambda_function.agent_invoker.arn
+          Payload = {
+            "agent_id"   = module.final_compiler_agent.agent_id
+            "alias_id"   = "TSTALIASID"
+            "step_name"  = "compiler_fallback"
+            "input_text"  = "{\"repository_name\":\"unknown\",\"project_summary\":\"This section could not be generated.\",\"installation_guide\":\"This section could not be generated.\",\"usage_examples\":\"This section could not be generated.\"}"
+          }
+        }
+        ResultPath = "$.compiler_output"
+        Next       = "SaveToS3"
+      }
+
+      # Step 4: Save to S3
+      SaveToS3 = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = aws_lambda_function.save_to_s3.arn
+          Payload = {
+            "repo_name.$"      = "$.repo_name"
+            "readme_content.$" = "$.compiler_output.Payload.result"
+          }
+        }
+        End = true
+      }
+    }
+  })
+}
+
+output "step_functions_arn" {
+  description = "ARN of the README Generator Step Functions state machine."
+  value       = aws_sfn_state_machine.readme_generator.arn
+}

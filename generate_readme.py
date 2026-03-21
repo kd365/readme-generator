@@ -48,6 +48,12 @@ KEY_FILES = [
 MAX_FILE_SIZE = 5000
 
 client = boto3.client("bedrock-agent-runtime", region_name="us-east-1")
+sfn_client = boto3.client("stepfunctions", region_name="us-east-1")
+s3_client = boto3.client("s3", region_name="us-east-1")
+
+# Step Functions state machine ARN — update after terraform apply
+STEP_FUNCTIONS_ARN = "arn:aws:states:us-east-1:388691194728:stateMachine:ReadmeGenerator-KH"
+OUTPUT_BUCKET = "readme-generator-output-bucket-y43m2ku6"
 
 # Session state
 session = {
@@ -758,6 +764,75 @@ def push_to_github():
 
 # --- Menu & History ---
 
+def generate_readme_serverless():
+    """Run the full pipeline via AWS Step Functions instead of local agents."""
+    url = console.input("  GitHub URL> ").strip()
+    if not url:
+        return
+    if not validate_github_url(url):
+        console.print("  [red]Invalid GitHub URL. Expected: https://github.com/owner/repo[/red]")
+        return
+
+    repo_name = url.rstrip("/").split("/")[-1].replace(".git", "")
+
+    console.print(f"\n  [bold cyan]Starting Step Functions execution...[/bold cyan]")
+    console.print(f"  [dim]State machine: {STEP_FUNCTIONS_ARN}[/dim]")
+
+    try:
+        response = sfn_client.start_execution(
+            stateMachineArn=STEP_FUNCTIONS_ARN,
+            input=json.dumps({"repo_url": url, "repo_name": repo_name})
+        )
+        execution_arn = response["executionArn"]
+        console.print(f"  [green]Execution started: {execution_arn.split(':')[-1]}[/green]")
+    except Exception as e:
+        console.print(f"  [red]Failed to start execution: {e}[/red]")
+        return
+
+    # Poll for completion
+    with Live(Spinner("dots", text="  Waiting for Step Functions to complete..."), console=console, refresh_per_second=10):
+        while True:
+            time.sleep(5)
+            status_response = sfn_client.describe_execution(executionArn=execution_arn)
+            status = status_response["status"]
+            if status in ("SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"):
+                break
+
+    if status == "SUCCEEDED":
+        console.print(f"  [bold green]Execution succeeded![/bold green]")
+
+        # Download result from S3
+        output_key = f"outputs/{repo_name}/README.md"
+        try:
+            obj = s3_client.get_object(Bucket=OUTPUT_BUCKET, Key=output_key)
+            readme_content = obj["Body"].read().decode("utf-8")
+            console.print(Panel(readme_content[:800] + ("..." if len(readme_content) > 800 else ""), title="Preview", border_style="green"))
+            console.print(f"\n  [dim]Full output: s3://{OUTPUT_BUCKET}/{output_key}[/dim]")
+
+            # Optionally save locally
+            save = console.input("\n  Save locally? (y/n)> ").strip().lower()
+            if save == "y":
+                os.makedirs(f"./projects/{repo_name}", exist_ok=True)
+                local_path = f"./projects/{repo_name}/GENERATED-README.md"
+                with open(local_path, "w") as f:
+                    f.write(readme_content)
+                console.print(f"  [green]Saved to {local_path}[/green]")
+        except Exception as e:
+            console.print(f"  [red]Could not download result: {e}[/red]")
+    else:
+        console.print(f"  [red]Execution {status}.[/red]")
+        if "error" in status_response.get("output", "").lower():
+            console.print(f"  [dim]{status_response.get('output', '')[:300]}[/dim]")
+        console.print("  [dim]Check the Step Functions console for details.[/dim]")
+
+    # Log to history
+    session["history"].append({
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "agent": "Step Functions (serverless)",
+        "output_preview": f"{status} — {repo_name}",
+    })
+
+
 def show_menu():
     """Display the main menu."""
     cached = f"(last scan: {session['repo_name']} — {len(session['scan_data']['files'])} files)" if session["scan_data"] else ""
@@ -766,9 +841,10 @@ def show_menu():
     existing_label = f"  3) Load existing project   ({len(existing)} found)" if existing else "  3) Load existing project   [dim](none found)[/dim]"
 
     menu = (
-        "  1) Generate README from a URL\n"
-        "  2) Re-run on last scanned repo\n"
+        "  1) Generate README from a URL    [dim](local)[/dim]\n"
+        "  2) Re-run on last scanned repo   [dim](local)[/dim]\n"
         f"{existing_label}\n"
+        "  4) Generate README from a URL    [dim](serverless / Step Functions)[/dim]\n"
         "  h) Session history\n"
         "  q) Quit"
     )
@@ -826,6 +902,9 @@ def main():
             if session["scan_data"]:
                 console.print("  [dim]Project loaded. Use option 2 to generate README.[/dim]")
 
+        elif choice == "4":
+            generate_readme_serverless()
+
         elif choice == "h":
             show_history()
 
@@ -834,7 +913,7 @@ def main():
             break
 
         else:
-            console.print("  [red]Invalid choice. Enter 1, 2, 3, h, or q.[/red]")
+            console.print("  [red]Invalid choice. Enter 1, 2, 3, 4, h, or q.[/red]")
 
 
 if __name__ == "__main__":
