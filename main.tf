@@ -641,20 +641,36 @@ resource "aws_sfn_state_machine" "readme_generator" {
             Next        = "CompileWithErrors"
           }
         ]
+        Next = "AssembleCompilerInput"
+      }
+
+      # Step 3a: Assemble compiler input from parallel results
+      AssembleCompilerInput = {
+        Type = "Pass"
+        Parameters = {
+          "repo_name.$"          = "$.repo_name"
+          "repo_url.$"           = "$.repo_url"
+          "compiler_input_parts" = {
+            "repository_name.$"    = "$.repo_name"
+            "project_summary.$"    = "$.analysis_results[0].Payload.result"
+            "installation_guide.$" = "$.analysis_results[1].Payload.result"
+            "usage_examples.$"     = "$.analysis_results[2].Payload.result"
+          }
+        }
         Next = "CompileReadme"
       }
 
-      # Step 3: Compile the README
+      # Step 3b: Compile the README
       CompileReadme = {
         Type     = "Task"
         Resource = "arn:aws:states:::lambda:invoke"
         Parameters = {
           FunctionName = aws_lambda_function.agent_invoker.arn
           Payload = {
-            "agent_id"   = module.final_compiler_agent.agent_id
-            "alias_id"   = "TSTALIASID"
-            "step_name"  = "compiler"
-            "input_text.$" = "States.Format('{{\"repository_name\":\"{}\",\"project_summary\":\"{}\",\"installation_guide\":\"{}\",\"usage_examples\":\"{}\"}}', $.repo_name, $.analysis_results[0].Payload.result, $.analysis_results[1].Payload.result, $.analysis_results[2].Payload.result)"
+            "agent_id"       = module.final_compiler_agent.agent_id
+            "alias_id"       = "TSTALIASID"
+            "step_name"      = "compiler"
+            "input_text.$"   = "States.JsonToString($.compiler_input_parts)"
           }
         }
         ResultPath = "$.compiler_output"
