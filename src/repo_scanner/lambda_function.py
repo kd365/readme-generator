@@ -133,7 +133,33 @@ def handler(event, context):
     else:
         result = list_files_in_repo(repo_url, context)
 
+    # Truncate result to stay within Bedrock Agent context limits
+    MAX_RESPONSE_SIZE = 20000
     response_body = json.dumps(result)
+    if len(response_body) > MAX_RESPONSE_SIZE:
+        print(f"Response too large ({len(response_body)} chars), truncating...")
+        # Keep priority files, trim the rest
+        trimmed = {"files": result.get("files", []), "key_file_contents": {}}
+        priority = ["package.json", "requirements.txt", "setup.py", "pyproject.toml",
+                     "Cargo.toml", "go.mod", "Gemfile", "pom.xml", "build.gradle",
+                     "Dockerfile", "docker-compose.yml", ".env.example", "Makefile"]
+        kfc = result.get("key_file_contents", {})
+        # Priority files first
+        for k, v in kfc.items():
+            if os.path.basename(k) in priority:
+                trimmed["key_file_contents"][k] = v[:3000] if len(v) > 3000 else v
+        # Then remaining files if space allows
+        for k, v in kfc.items():
+            if os.path.basename(k) not in priority:
+                trimmed["key_file_contents"][k] = v[:2000] if len(v) > 2000 else v
+                if len(json.dumps(trimmed)) > MAX_RESPONSE_SIZE:
+                    break
+        # If still too large, truncate file list to just names
+        response_body = json.dumps(trimmed)
+        if len(response_body) > MAX_RESPONSE_SIZE:
+            trimmed["files"] = trimmed["files"][:500]
+            response_body = json.dumps(trimmed)
+        print(f"Truncated to {len(response_body)} chars, {len(trimmed['key_file_contents'])} key files")
 
     api_response = {
         'messageVersion': '1.0',
