@@ -16,6 +16,7 @@ def handler(event, context):
 
     repo_name = event.get("repo_name", "unknown")
     readme_content = event.get("readme_content", "")
+    security_findings = event.get("security_findings", [])
     output_key = f"outputs/{repo_name}/README.md"
 
     # Strip preamble before first # header
@@ -24,6 +25,12 @@ def handler(event, context):
         if line.startswith("# "):
             readme_content = "\n".join(lines[i:])
             break
+
+    # Append security notes if findings exist
+    if security_findings:
+        readme_content += "\n\n## Security Notes\n\n"
+        for finding in security_findings:
+            readme_content += f"- {finding}\n"
 
     try:
         s3_client.put_object(
