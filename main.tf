@@ -470,6 +470,24 @@ resource "aws_lambda_function" "save_to_s3" {
   }
 }
 
+# Security scan Lambda (runs in parallel with analytical agents)
+data "archive_file" "security_scan_zip" {
+  type        = "zip"
+  source_dir  = "${path.root}/src/security_scan"
+  output_path = "${path.root}/dist/security_scan.zip"
+}
+
+resource "aws_lambda_function" "security_scan" {
+  function_name    = "SecurityScan-${var.name_suffix}"
+  role             = module.lambda_execution_role.role_arn
+  filename         = data.archive_file.security_scan_zip.output_path
+  handler          = "lambda_function.handler"
+  runtime          = "python3.11"
+  timeout          = 90
+  source_code_hash = data.archive_file.security_scan_zip.output_base64sha256
+  layers           = ["arn:aws:lambda:us-east-1:553035198032:layer:git-lambda2:8"]
+}
+
 # Direct scanner Lambda (bypasses Bedrock Agent, returns structured JSON)
 data "archive_file" "scanner_direct_zip" {
   type        = "zip"
@@ -509,6 +527,7 @@ resource "aws_iam_role_policy" "step_functions_invoke_lambda" {
         Resource = [
           aws_lambda_function.repo_scanner_lambda.arn,
           aws_lambda_function.scanner_direct.arn,
+          aws_lambda_function.security_scan.arn,
           aws_lambda_function.agent_invoker.arn,
           aws_lambda_function.save_to_s3.arn,
         ]
@@ -647,6 +666,30 @@ resource "aws_sfn_state_machine" "readme_generator" {
                 End = true
               }
             }
+          },
+          {
+            StartAt = "RunSecurityScan"
+            States = {
+              RunSecurityScan = {
+                Type     = "Task"
+                Resource = "arn:aws:states:::lambda:invoke"
+                Parameters = {
+                  FunctionName = aws_lambda_function.security_scan.arn
+                  Payload = {
+                    "repo_url.$" = "$.repo_url"
+                  }
+                }
+                Retry = [
+                  {
+                    ErrorEquals     = ["Lambda.ServiceException", "States.TaskFailed"]
+                    IntervalSeconds = 5
+                    MaxAttempts     = 2
+                    BackoffRate     = 2
+                  }
+                ]
+                End = true
+              }
+            }
           }
         ]
         ResultPath = "$.analysis_results"
@@ -661,11 +704,13 @@ resource "aws_sfn_state_machine" "readme_generator" {
       }
 
       # Step 3a: Assemble compiler input from parallel results
+      # Index: [0]=summarizer, [1]=installation, [2]=usage, [3]=security
       AssembleCompilerInput = {
         Type = "Pass"
         Parameters = {
           "repo_name.$"          = "$.repo_name"
           "repo_url.$"           = "$.repo_url"
+          "security_findings.$"  = "$.analysis_results[3].Payload.findings"
           "compiler_input_parts" = {
             "repository_name.$"    = "$.repo_name"
             "project_summary.$"    = "$.analysis_results[0].Payload.result"
@@ -725,8 +770,9 @@ resource "aws_sfn_state_machine" "readme_generator" {
         Parameters = {
           FunctionName = aws_lambda_function.save_to_s3.arn
           Payload = {
-            "repo_name.$"      = "$.repo_name"
-            "readme_content.$" = "$.compiler_output.Payload.result"
+            "repo_name.$"          = "$.repo_name"
+            "readme_content.$"     = "$.compiler_output.Payload.result"
+            "security_findings.$"  = "$.security_findings"
           }
         }
         End = true
