@@ -1,0 +1,47 @@
+name: Deploy and Run AI README Generator
+
+on:
+  push:
+    branches:
+      - main
+      - lab-follow-along
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+
+      - name: Run AI Workflow
+        run: |
+          echo "Triggering AI README Generation..."
+          BUCKET_NAME=$(terraform output -raw readme_bucket_name)
+          REPO_URL="https://github.com/${{ github.repository }}"
+          FILENAME=$(python3 -c "import urllib.parse; print(urllib.parse.quote_plus('${REPO_URL}'))")
+          touch ${FILENAME}
+          aws s3 cp ${FILENAME} s3://${BUCKET_NAME}/inputs/${FILENAME}
+          rm ${FILENAME}
+          echo "Workflow triggered for ${REPO_URL}."
